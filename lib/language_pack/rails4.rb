@@ -3,6 +3,8 @@ require "language_pack/rails3"
 
 # Rails 4 Language Pack. This is for all Rails 4.x apps.
 class LanguagePack::Rails4 < LanguagePack::Rails3
+  ASSETS_CACHE_LIMIT = 52428800 # bytes
+
   # detects if this is a Rails 3.x app
   # @return [Boolean] true if it's a Rails 3.x app
   def self.use?
@@ -42,16 +44,25 @@ class LanguagePack::Rails4 < LanguagePack::Rails3
   private
 
   def install_plugins
-    return false unless plugins.any?
+    instrument "rails4.install_plugins" do
+      return false if gem_is_bundled?('rails_12factor')
+      plugins = ["rails_serve_static_assets", "rails_stdout_logging"].reject { |plugin| gem_is_bundled?(plugin) }
+      return false if plugins.empty?
+
     warn <<-WARNING
 Include 'rails_12factor' gem to enable all platform features
 See https://devcenter.heroku.com/articles/rails-integration-gems for more information.
 WARNING
     # do not install plugins, do not call super
+    end
   end
 
   def public_assets_folder
     "public/assets"
+  end
+
+  def default_assets_cache
+    "tmp/cache/assets"
   end
 
   def run_assets_precompile_rake_task
@@ -68,6 +79,7 @@ WARNING
             ENV["RAILS_ENV"]    ||= "production"
 
             @cache.load public_assets_folder
+            @cache.load default_assets_cache
 
             puts "Running: rake assets:precompile"
             require 'benchmark'
@@ -80,7 +92,9 @@ WARNING
               puts "Cleaning assets"
               pipe "env PATH=$PATH:bin bundle exec rake assets:clean 2>& 1"
 
+              cleanup_assets_cache
               @cache.store public_assets_folder
+              @cache.store default_assets_cache
             else
               log "assets_precompile", :status => "failure"
               error "Precompiling assets failed."
@@ -90,6 +104,12 @@ WARNING
           puts "Error detecting the assets:precompile task"
         end
       end
+    end
+  end
+
+  def cleanup_assets_cache
+    instrument "rails4.cleanup_assets_cache" do
+      LanguagePack::Helpers::StaleFileCleaner.new(default_assets_cache).clean_over(ASSETS_CACHE_LIMIT)
     end
   end
 end

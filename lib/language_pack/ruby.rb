@@ -11,7 +11,7 @@ class LanguagePack::Ruby < LanguagePack::Base
   extend LanguagePack::BundlerLockfile::ClassMethods
 
   NAME                 = "ruby"
-  BUILDPACK_VERSION    = "v77"
+  BUILDPACK_VERSION    = "v80"
   LIBYAML_VERSION      = "0.1.4"
   LIBYAML_PATH         = "libyaml-#{LIBYAML_VERSION}"
   BUNDLER_VERSION      = "1.3.2"
@@ -147,18 +147,12 @@ private
       return @ruby_version if @ruby_version_run
 
       @ruby_version_run     = true
-      @ruby_version_env_var = false
       @ruby_version_set     = false
 
       old_system_path = "/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin"
       @ruby_version = run_stdout("env PATH=#{bundler_path}/bin:#{old_system_path} GEM_PATH=#{bundler_path} bundle platform --ruby").chomp
 
-      if @ruby_version == "No ruby version specified" && ENV['RUBY_VERSION']
-        # for backwards compatibility.
-        # this will go away in the future
-        @ruby_version = ENV['RUBY_VERSION']
-        @ruby_version_env_var = true
-      elsif @ruby_version == "No ruby version specified"
+      if @ruby_version == "No ruby version specified"
         if new_app?
           @ruby_version = DEFAULT_RUBY_VERSION
         elsif !@metadata.exists?("buildpack_ruby_version")
@@ -196,7 +190,7 @@ private
   # default JRUBY_OPTS
   # return [String] string of JRUBY_OPTS
   def default_jruby_opts
-    "-Xcompile.invokedynamic=true"
+    "-Xcompile.invokedynamic=false"
   end
 
   # default JAVA_TOOL_OPTIONS
@@ -230,6 +224,7 @@ private
         ENV[key] ||= value
       end
       ENV["GEM_HOME"] = slug_vendor_base
+      ENV["GEM_PATH"] = slug_vendor_base
       ENV["PATH"]     = "#{ruby_install_binstub_path}:#{slug_vendor_base}/bin:#{config_vars["PATH"]}"
     end
   end
@@ -239,7 +234,7 @@ private
     instrument 'setup_profiled' do
       set_env_override "GEM_PATH", "$HOME/#{slug_vendor_base}:$GEM_PATH"
       set_env_default  "LANG",     "en_US.UTF-8"
-      set_env_override "PATH",     "$HOME/bin:$HOME/#{slug_vendor_base}/bin:$PATH"
+      set_env_override "PATH",     "$HOME/bin:$HOME/#{slug_vendor_base}/bin:$HOME/#{bundler_binstubs_path}:$PATH"
       set_env_override "LD_LIBRARY_PATH", "vendor/freetds/lib:$LD_LIBRARY_PATH"
 
       if ruby_version_jruby?
@@ -253,7 +248,7 @@ private
   # determines if a build ruby is required
   # @return [Boolean] true if a build ruby is required
   def build_ruby?
-    @build_ruby ||= !ruby_version_rbx? && !ruby_version_jruby? && !%w{ruby-1.9.3 ruby-2.0.0}.include?(ruby_version)
+    @build_ruby ||= %w{ruby-1.8.7 ruby-1.9.2}.include?(ruby_version)
   end
 
   # install the vendored ruby
@@ -308,29 +303,24 @@ ERROR_MSG
       end
       error invalid_ruby_version_message unless $?.success?
 
-      bin_dir = "bin"
-      FileUtils.mkdir_p bin_dir
-      Dir["#{slug_vendor_ruby}/bin/*"].each do |bin|
-        run("ln -s ../#{bin} #{bin_dir}")
+      app_bin_dir = "bin"
+      FileUtils.mkdir_p app_bin_dir
+
+      run("ln -s ruby #{slug_vendor_ruby}/bin/ruby.exe")
+
+      Dir["#{slug_vendor_ruby}/bin/*"].each do |vendor_bin|
+        run("ln -s ../#{vendor_bin} #{app_bin_dir}")
       end
 
       @metadata.write("buildpack_ruby_version", ruby_version)
 
-      if !@ruby_version_env_var
-        topic "Using Ruby version: #{ruby_version}"
-        if !@ruby_version_set
-          warn(<<WARNING)
+      topic "Using Ruby version: #{ruby_version}"
+      if !@ruby_version_set
+        warn(<<WARNING)
 You have not declared a Ruby version in your Gemfile.
 To set your Ruby version add this line to your Gemfile:
 #{ruby_version_to_gemfile}
 # See https://devcenter.heroku.com/articles/ruby-versions for more information."
-WARNING
-        end
-      else
-        warn(<<WARNING)
-Using RUBY_VERSION: #{ruby_version}
-RUBY_VERSION support has been deprecated and will be removed entirely on August 1, 2012.
-See https://devcenter.heroku.com/articles/ruby-versions#selecting_a_version_of_ruby for more information.
 WARNING
       end
     end
